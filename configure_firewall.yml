@@ -1,0 +1,149 @@
+---
+- name: Configure Unifi Cloud Gateway Firewall Rules
+  hosts: localhost
+  gather_facts: false
+
+  vars:
+    # Unifi Controller connection settings
+    unifi_controller: "{{ lookup('env', 'UNIFI_CONTROLLER') | default('192.168.1.1', true) }}"
+    unifi_api_token: "{{ lookup('env', 'UNIFI_API_TOKEN') }}"
+    unifi_site: "{{ lookup('env', 'UNIFI_SITE') | default('default', true) }}"
+    unifi_port: "{{ lookup('env', 'UNIFI_PORT') | default('443', true) }}"
+
+  vars_files:
+    - vars/firewall_rules.yml
+
+  tasks:
+    - name: Check required variables
+      assert:
+        that:
+          - unifi_api_token is defined and unifi_api_token != ""
+          - firewall_rules is defined
+        fail_msg: |
+          Missing required configuration:
+          - Set UNIFI_API_TOKEN environment variable
+          - Ensure vars/firewall_rules.yml exists and contains firewall_rules
+
+    - name: Display configuration summary
+      debug:
+        msg: |
+          Configuring Unifi Cloud Gateway: {{ unifi_controller }}
+          Site: {{ unifi_site }}
+          Number of rules to create: {{ firewall_rules | length }}
+
+    - name: Get existing firewall rules
+      uri:
+        url: "https://{{ unifi_controller }}:{{ unifi_port }}/proxy/network/api/s/{{ unifi_site }}/rest/firewallrule"
+        method: GET
+        headers:
+          X-API-KEY: "{{ unifi_api_token }}"
+        validate_certs: false
+      register: existing_rules
+
+    - name: Display existing ANSIBLE-managed rules
+      debug:
+        msg: "Found {{ existing_rules.json.data | selectattr('name', 'match', '^ANSIBLE-') | list | length }} existing ANSIBLE-managed rules"
+        #msg: " {{ existing_rules.json.data }}"
+
+    - name: Delete existing ANSIBLE-managed firewall rules
+      uri:
+        url: "https://{{ unifi_controller }}:{{ unifi_port }}/proxy/network/api/s/{{ unifi_site }}/rest/firewallrule/{{ item._id }}"
+        method: DELETE
+        headers:
+          X-API-KEY: "{{ unifi_api_token }}"
+        validate_certs: false
+        status_code: [200, 204]
+      loop: "{{ existing_rules.json.data | selectattr('name', 'match', '^ANSIBLE-') | list }}"
+      when: existing_rules.json.data is defined and (existing_rules.json.data | length > 0)
+      loop_control:
+        label: "{{ item.name }}"
+
+    - name: Create firewall rules from configuration
+      uri:
+        url: "https://{{ unifi_controller }}:{{ unifi_port }}/proxy/network/api/s/{{ unifi_site }}/rest/firewallrule"
+        method: POST
+        body_format: json
+        headers:
+          X-API-KEY: "{{ unifi_api_token }}"
+        body: "{{ rule_body }}"
+        validate_certs: false
+        status_code: [200, 201]
+      loop: "{{ firewall_rules }}"
+      loop_control:
+        loop_var: rule
+        label: "{{ rule.name }} (index: {{ rule.rule_index }})"
+      vars:
+        # Build the rule body dynamically, only including defined fields
+        rule_body: |
+          {
+            "name": "{{ rule.name }}",
+            "ruleset": "{{ rule.ruleset }}",
+            "rule_index": {{ rule.rule_index }},
+            "enabled": {{ rule.enabled | default(true) | lower }},
+            "action": "{{ rule.action }}",
+            "protocol": "{{ rule.protocol | default('all') }}"
+            {% if rule.src_address is defined %}
+            ,"src_address": "{{ rule.src_address }}"
+            {% endif %}
+            {% if rule.dst_address is defined %}
+            ,"dst_address": "{{ rule.dst_address }}"
+            {% endif %}
+            {% if rule.src_port is defined %}
+            ,"src_port": "{{ rule.src_port }}"
+            {% endif %}
+            {% if rule.dst_port is defined %}
+            ,"dst_port": "{{ rule.dst_port }}"
+            {% endif %}
+            {% if rule.src_networkconf_id is defined %}
+            ,"src_networkconf_id": "{{ rule.src_networkconf_id }}"
+            {% endif %}
+            {% if rule.dst_networkconf_id is defined %}
+            ,"dst_networkconf_id": "{{ rule.dst_networkconf_id }}"
+            {% endif %}
+            {% if rule.src_networkconf_type is defined %}
+            ,"src_networkconf_type": "{{ rule.src_networkconf_type }}"
+            {% endif %}
+            {% if rule.dst_networkconf_type is defined %}
+            ,"dst_networkconf_type": "{{ rule.dst_networkconf_type }}"
+            {% endif %}
+            {% if rule.state_established is defined %}
+            ,"state_established": {{ rule.state_established | lower }}
+            {% endif %}
+            {% if rule.state_related is defined %}
+            ,"state_related": {{ rule.state_related | lower }}
+            {% endif %}
+            {% if rule.state_new is defined %}
+            ,"state_new": {{ rule.state_new | lower }}
+            {% endif %}
+            {% if rule.state_invalid is defined %}
+            ,"state_invalid": {{ rule.state_invalid | lower }}
+            {% endif %}
+            {% if rule.logging is defined %}
+            ,"logging": {{ rule.logging | lower }}
+            {% endif %}
+            {% if rule.icmp_typename is defined %}
+            ,"icmp_typename": "{{ rule.icmp_typename }}"
+            {% endif %}
+          }
+
+    - name: Display completion summary
+      debug:
+        msg: |
+
+          ========================================
+          Firewall Configuration Complete!
+          ========================================
+
+          Controller: {{ unifi_controller }}
+          Site: {{ unifi_site }}
+          Rules created: {{ firewall_rules | length }}
+
+          All rules are prefixed with "ANSIBLE-" for easy identification.
+
+          Rule Summary:
+          {% for rule in firewall_rules %}
+          - [{{ rule.rule_index }}] {{ rule.name }}: {{ rule.description | default('No description') }}
+          {% endfor %}
+
+          To verify, log into the Unifi Controller and navigate to:
+          Settings > Security > Firewall Rules

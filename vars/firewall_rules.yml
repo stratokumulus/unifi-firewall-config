@@ -1,0 +1,171 @@
+---
+# Unifi Cloud Gateway Firewall Rules Configuration
+# All rules managed by Ansible should be defined here
+
+# Network definitions
+vlans:
+  - id: "1"
+    name: "default"
+    subnet: "192.168.1.0/24"
+  - id: "2"
+    name: "lab"
+    subnet: "192.168.2.0/24"
+  - id: "20"
+    name: "iot"
+    subnet: "192.168.10.0/24"
+  - id: "21"
+    name: "cameras"
+    subnet: "192.168.11.0/24"
+  - id: "100"
+    name: "untrusted"
+    subnet: "192.168.100.0/24"
+
+# Special hosts with custom access requirements
+special_hosts:
+  home_assistant:
+    name: "automation-hub"
+    ip: "192.168.10.3"
+    access: "all"
+  robot1:
+    name: "robot1"
+    ip: "192.168.10.60"
+    access: "internet_only"
+  robot2:
+    name: "robot2"
+    ip: "192.168.10.61"
+    access: "internet_only"
+
+# RFC1918 private address ranges
+rfc1918_ranges: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+
+# Firewall rules definition
+# Rules are applied in order based on rule_index (lower number = higher priority)
+firewall_rules:
+  # Allow established and related connections (essential for return traffic)
+  - name: "ANSIBLE-Allow-Established-Related"
+    description: "Allow established and related connections for return traffic"
+    ruleset: "LAN_IN"
+    rule_index: 2000
+    enabled: true
+    action: "accept"
+    protocol: "all"
+    state_established: true
+    state_related: true
+    logging: false
+
+  # Allow Default network to access all other networks
+  - name: "ANSIBLE-Default-to-All"
+    description: "Allow default network full access to all networks"
+    ruleset: "LAN_IN"
+    rule_index: 2001
+    enabled: true
+    action: "accept"
+    protocol: "all"
+    src_address: "192.168.1.0/24"
+    logging: false
+
+  # Allow Home Assistant to access all VLANs
+  - name: "ANSIBLE-AutomationHub-to-All"
+    description: "Allow Home Assistant to manage devices across all VLANs"
+    ruleset: "LAN_IN"
+    rule_index: 2002
+    enabled: true
+    action: "accept"
+    protocol: "all"
+    src_address: "192.168.10.3"
+    logging: false
+
+  # Block robots from accessing RFC1918 (private networks)
+  - name: "ANSIBLE-Robot1-Block-Default"
+    description: "Block robot1 from accessing private networks"
+    ruleset: "LAN_IN"
+    rule_index: 2003
+    enabled: true
+    action: "drop"
+    protocol: "all"
+    src_address: "192.168.10.60"
+    dst_address: "192.168.0.0/16"
+    logging: false
+
+  # - name: "ANSIBLE-Robot2-Block-RFC1918"
+  #   description: "Block robot2 from accessing private networks"
+  #   ruleset: "LAN_IN"
+  #   rule_index: 2004
+  #   enabled: true
+  #   action: "drop"
+  #   protocol: "all"
+  #   src_address: "192.168.20.61"
+  #   dst_address: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16" # : create a group of subnets, and replace dsp_address by dst_firewallgroup_ids and the ID of the newly created group. Or create one rule for 192.168.0.0/16, one for 172... 
+  #   logging: false
+
+  # Allow robots to access internet (after blocking RFC1918)
+  - name: "ANSIBLE-Dreame-Internet"
+    description: "Allow robot1 to access internet"
+    ruleset: "LAN_IN"
+    rule_index: 2005
+    enabled: true
+    action: "accept"
+    protocol: "all"
+    src_address: "192.168.20.60"
+    logging: false
+
+  # - name: "ANSIBLE-Robot2-Internet"
+    description: "Allow robot2 to access internet"
+    ruleset: "LAN_IN"
+    rule_index: 2006
+    enabled: true
+    action: "accept"
+    protocol: "all"
+    src_address: "192.168.20.61"
+    logging: false
+
+  # # Default deny rule for inter-VLAN traffic (catch-all)
+  - name: "ANSIBLE-Deny-Inter-VLAN"
+    description: "Default deny for all inter-VLAN traffic not explicitly allowed"
+    ruleset: "LAN_IN"
+    rule_index: 2999
+    enabled: true
+    action: "drop"
+    protocol: "all"
+    src_address: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16" # See comments above for subnet groups
+    dst_address: "10.0.0.0/8,172.16.0.0/12,192.168.0.0/16"
+    logging: true
+
+  # Example additional rules (commented out)
+  # Uncomment and modify as needed
+
+  # Allow specific port to cameras from lab
+  - name: "ANSIBLE-Lab-to-Cameras-RTSP"
+    description: "Allow lab network to access camera RTSP streams"
+    ruleset: "LAN_IN"
+    rule_index: 21020
+    enabled: true
+    action: "accept"
+    protocol: "tcp"
+    src_address: "192.168.2.0/24"
+    dst_address: "192.168.21.0/24"
+    dst_port: "554,8554"
+    logging: false
+# Allow DNS from IoT to default network
+ - name: "ANSIBLE-IoT-to-DNS"
+   description: "Allow IoT devices to access DNS server"
+   ruleset: "LAN_IN"
+   rule_index: 2101
+   enabled: true
+   action: "accept"
+   protocol: "udp"
+   src_address: "192.168.20.0/24"
+   dst_address: "192.168.1.1"
+   dst_port: "53"
+   logging: false
+
+# Allow NTP from all networks
+ - name: "ANSIBLE-All-to-NTP"
+   description: "Allow all networks to access NTP server"
+   ruleset: "LAN_IN"
+   rule_index: 2102
+   enabled: true
+   action: "accept"
+   protocol: "udp"
+   dst_port: "123"
+   logging: false
